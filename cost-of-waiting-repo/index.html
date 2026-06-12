@@ -124,6 +124,25 @@
   #installBtn:active{transform:scale(.98)}
   .ios-tip{font-size:12px;color:var(--sub);text-align:center;margin:2px 0 16px;line-height:1.5}
   .ios-tip b{color:var(--navy)}
+
+  .toolbar{display:flex;gap:10px;margin-bottom:14px}
+  .tool{flex:1;height:44px;border-radius:10px;border:1px solid var(--border);background:#fff;
+    color:var(--ink);font-size:14px;font-weight:600;cursor:pointer;display:inline-flex;
+    align-items:center;justify-content:center;gap:8px;box-shadow:var(--shadow)}
+  .tool:active{transform:scale(.98)}
+  .tool.primary{background:var(--brand);color:#fff;border-color:var(--brand)}
+  .toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 20px);
+    transform:translateX(-50%);background:var(--navy);color:#fff;font-size:13px;font-weight:600;
+    padding:11px 18px;border-radius:10px;box-shadow:var(--shadow-md);opacity:0;pointer-events:none;
+    transition:opacity .2s;z-index:50;max-width:90%}
+  .toast.show{opacity:1}
+
+  @media print{
+    body{background:#fff;padding:0}
+    .toolbar,#installBtn,.ios-tip,.toast{display:none !important}
+    .card,.hero,.disclaimer{box-shadow:none;break-inside:avoid}
+    .wrap{max-width:none}
+  }
 </style>
 </head>
 <body>
@@ -140,6 +159,18 @@
   </header>
 
   <button id="installBtn">Install this app</button>
+
+  <div class="toolbar">
+    <button class="tool primary" id="shareBtn">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7"/><path d="M12 15V3"/><path d="m8 7 4-4 4 4"/></svg>
+      Share
+    </button>
+    <button class="tool" id="printBtn">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><path d="M6 18H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="7" rx="1"/></svg>
+      Print / PDF
+    </button>
+  </div>
+  <div class="toast" id="toast"></div>
 
   <!-- hero -->
   <div class="hero" id="hero">
@@ -393,6 +424,7 @@
 
   function render(){
     var d=compute();
+    lastData=d;
     // hero
     var costsMore=d.dLifetime>=0;
     var hero=$("hero");
@@ -441,11 +473,61 @@
       : ("The projected "+usd(Math.abs(d.priceGain))+" drop outweighs the "+usd(Math.max(0,d.principalPaid))+" of principal you'd pay down. Waiting comes out ahead.");
   }
 
+  var lastData=null;
+
+  // Prefill inputs from a shared link (?cp=&cr=&ar=&fr=&dp=&ty=&mo=)
+  (function prefillFromURL(){
+    try{
+      var q=new URLSearchParams(location.search);
+      var map={cp:"currentPrice",cr:"currentRate",ar:"apprRate",fr:"futureRate",dp:"downPct",ty:"termYears",mo:"months"};
+      Object.keys(map).forEach(function(k){
+        if(q.has(k)){ var v=q.get(k); if(v!==null && v!=="" && isFinite(parseFloat(v))) $(map[k]).value=v; }
+      });
+    }catch(e){}
+  })();
+
   // listeners
   ["currentPrice","currentRate","apprRate","futureRate","downPct","termYears","months"].forEach(function(id){
     $(id).addEventListener("input",render);
   });
   render();
+
+  // ---- Share & Print ----
+  function showToast(msg){var t=$("toast");t.textContent=msg;t.classList.add("show");setTimeout(function(){t.classList.remove("show");},2600);}
+
+  function scenarioURL(){
+    var d=lastData||compute();
+    var p=new URLSearchParams({
+      cp:num("currentPrice"), cr:num("currentRate"), ar:num("apprRate"),
+      fr:num("futureRate"), dp:num("downPct"), ty:num("termYears"), mo:num("months")
+    });
+    return location.origin+location.pathname+"?"+p.toString();
+  }
+
+  function summaryText(){
+    var d=lastData||compute();
+    var costsMore=d.dLifetime>=0;
+    var gainPos=d.ownedEquityGain>=0;
+    return "The Cost of Waiting — Northstar Mortgage Advisors\n\n"+
+      "Buy now: "+usd(d.currentPrice)+" at "+num("currentRate")+"%  →  "+usd(Math.round(d.now.pi))+"/mo\n"+
+      "Wait "+d.months+" mo: "+usd(d.futurePrice)+" at "+num("futureRate")+"%  →  "+usd(Math.round(d.wait.pi))+"/mo\n\n"+
+      (costsMore?"Waiting costs ":"Waiting saves ")+usd(Math.abs(d.dMonthly))+"/mo · "+usd(Math.abs(d.dLifetime))+" over the loan\n"+
+      (gainPos?"Equity forfeited by waiting: ":"Equity risk avoided by waiting: ")+usd(Math.abs(d.ownedEquityGain))+"\n\n"+
+      "Full breakdown (P&I only; for illustration):";
+  }
+
+  $("shareBtn").addEventListener("click",async function(){
+    var url=scenarioURL(), text=summaryText();
+    if(navigator.share){
+      try{ await navigator.share({title:"The Cost of Waiting",text:text,url:url}); }
+      catch(e){ /* user cancelled */ }
+    } else {
+      try{ await navigator.clipboard.writeText(text+"\n"+url); showToast("Summary + link copied to clipboard"); }
+      catch(e){ window.prompt("Copy this link to share:", url); }
+    }
+  });
+
+  $("printBtn").addEventListener("click",function(){ window.print(); });
 
   // PWA install
   var deferred=null;
