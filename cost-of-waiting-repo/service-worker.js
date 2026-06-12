@@ -1,5 +1,8 @@
-/* Cost of Waiting — offline app shell */
-var CACHE = "cow-v1";
+/* Cost of Waiting — service worker (v2)
+ * Network-first for the page so updates appear automatically when online;
+ * cache-first for icons/manifest for speed; full offline fallback.
+ */
+var CACHE = "cow-v2";
 var ASSETS = [
   "./",
   "./index.html",
@@ -28,14 +31,35 @@ self.addEventListener("activate", function (e) {
 });
 
 self.addEventListener("fetch", function (e) {
-  if (e.request.method !== "GET") return;
-  e.respondWith(
-    caches.match(e.request).then(function (cached) {
-      return cached || fetch(e.request).then(function (resp) {
+  var req = e.request;
+  if (req.method !== "GET") return;
+
+  var isPage = req.mode === "navigate" ||
+    (req.headers.get("accept") || "").indexOf("text/html") !== -1;
+
+  if (isPage) {
+    // Network-first: always try to get the freshest page when online.
+    e.respondWith(
+      fetch(req).then(function (resp) {
         var copy = resp.clone();
-        caches.open(CACHE).then(function (c) { c.put(e.request, copy); });
+        caches.open(CACHE).then(function (c) { c.put("./index.html", copy); });
         return resp;
-      }).catch(function () { return caches.match("./index.html"); });
+      }).catch(function () {
+        return caches.match(req).then(function (r) { return r || caches.match("./index.html"); });
+      })
+    );
+    return;
+  }
+
+  // Cache-first for static assets, refreshing in the background.
+  e.respondWith(
+    caches.match(req).then(function (cached) {
+      var network = fetch(req).then(function (resp) {
+        var copy = resp.clone();
+        caches.open(CACHE).then(function (c) { c.put(req, copy); });
+        return resp;
+      }).catch(function () { return cached; });
+      return cached || network;
     })
   );
 });
